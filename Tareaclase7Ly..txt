@@ -1,0 +1,75 @@
+import cobra
+import numpy as np
+import re
+from numpy import zeros
+
+
+# FUNCIONES:
+# Funcion de presentacion de resultados del modelo:
+def buscarMetabolito(nombre_del_metabolito): #nombre dek metabolito
+    metabolites = []
+    for met in model.metabolites:
+        if re.match(nombre_del_metabolito,met.name,re.IGNORECASE):
+            metabolites.append(met)
+            
+    if len(metabolites)==0:
+        print "Not found metabolite"
+    else: 
+        for met in metabolites:
+            print "=================================="
+            print met.name, met.id
+            print "=================================="
+            for reaction in model.metabolites.get_by_id(met.id).reactions:
+                print reaction
+
+#Funcion para calculo de norma euclidiana:
+def norma_eucli(data_experim, data_simul):
+    # data_experim = Vector de datos experimentales
+    # data_simul   = Listado de productos metabolicos
+    size = len(data_simul)        # Cantidad de datos simulados
+    v_simul = zeros(size)         # Vector de datos simulados "vacio"
+    
+    if size == len(data_experim): # Verificando correspondencia en cantidad de datos
+        for i in range(size):     # Generando los datos simulados y rellenando vector "vacio"
+            v_simul[i] = solution.fluxes[data_simul[i]]
+    
+        diff = data_experim - v_simul
+        print "Norma euclidiana de los datos =", np.dot(diff,diff)
+    else:
+        return "No se puede calcular. La cantidad de datos experimentales vs simulados no coincide"
+    
+    
+
+model = cobra.io.read_sbml_model("iMM904.xml")
+
+solution=model.optimize() #cambios en la funcion objetivo acorde a datos experimentales
+model.summary()  
+    
+result1 = buscarMetabolito("glycerol")
+result2 = buscarMetabolito("ethanol")
+result3 = buscarMetabolito("succinate")
+result4 = buscarMetabolito("pyruvate")
+
+value=3.632
+model.reactions.get_by_id("EX_etoh_e").upper_bound=value+0.1*value 
+model.reactions.get_by_id("EX_etoh_e").lower_bound=value-0.1*value
+
+value=0.0132
+model.reactions.get_by_id("EX_succ_e").upper_bound=value+0.1*value 
+model.reactions.get_by_id("EX_succ_e").lower_bound=value-0.1*value
+
+value=-3.002
+model.reactions.get_by_id("EX_glc__D_e").upper_bound=value+0.1*value 
+model.reactions.get_by_id("EX_glc__D_e").lower_bound=value-0.1*value
+
+value=-0.0006
+model.reactions.get_by_id("EX_pyr_e").upper_bound=value+0.1*value 
+model.reactions.get_by_id("EX_pyr_e").lower_bound=value-0.1*value
+
+  
+    
+    
+#Calculo de la norma euclidiana para los datos de la Ref. 20:
+exp = [0.211, 0.0078, 0.0048, 0.0005]                      # Datos experimentales
+sim = ["EX_glyc_e", "EX_ac_e", "EX_acald_e", "EX_pyr_e"]   # Datos simulados
+norma_eucli(exp, sim)
