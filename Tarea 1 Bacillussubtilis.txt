@@ -1,0 +1,124 @@
+import cobra.test, cobra, re, math
+import numpy             as np
+import matplotlib.pyplot as plt
+from matplotlib           import cm
+from mpl_toolkits.mplot3d import Axes3D
+from cobra.flux_analysis  import production_envelope
+
+print  "                            MODELAMIENTO COMPUTACIONAL DEL METABOLISMO MICROBIANO"
+print   "                                                     Tarea 1"
+print "                                        "
+
+#Ordenando funciones
+#Funcion para calculo de norma euclidiana:
+def norma_eucli(data_experim, data_simul):
+    size = len(data_simul)        # Cantidad de datos simulados
+    v_simul = np.zeros(size)         # Vector de datos simulados "vacio"
+    
+    if size == len(data_experim): # Verificando correspondencia en cantidad de datos
+        for i in range(size):     
+            v_simul[i]      = abs(solution.fluxes[data_simul[i]]) # Generando los datos simulados y rellenando vector "vacio"
+            data_experim[i] = abs(data_experim[i])                # Estableciendo el valor absoluto de los datos experimentales
+        diff = data_experim - v_simul
+        print '\033[1m' + "Norma euclidiana de los datos =", '\033[0m', round(np.dot(diff,diff),3)
+    else:
+        return "No se puede calcular. La cantidad de datos experimentales vs. simulados no coincide"
+   
+sustrato1 = "EX_glc__D_e"
+sustrato2 = "EX_nh4_e"
+
+# PREDICCION DE LOS FLUJOS_______________________________________________________________________________________________________________________
+model= cobra.io.read_sbml_model ("iYO844.xml")
+# print "Reactions",len(model.reactions)
+# print "Metabolites", len(model.metabolites)
+print '\033[1m' + "Funcion objetivo", '\033[0m', model.objective
+print "=========================================================================================================================="
+
+print '\033[1m' + "Simulacion de la distribucion de fluxes usando FBA y resumen de los fluxes de sustratos, productos, y reacción de biomasa" 
+print "\033[0m             "
+solution = model.optimize()
+model.summary()
+print "=========================================================================================================================="
+
+print '\033[1m' + "Reacciones en las que participa el sustrato limitante: Glucosa",'\033[0m'
+for reaction in model.metabolites.get_by_id("glc__D_e").reactions:
+    print reaction.id, reaction.bounds
+print " "
+print '\033[1m' + "Reacciones en las que participa el sustrato limitante: Amonio",'\033[0m'
+for reaction in model.metabolites.get_by_id("nh4_e").reactions:
+    print reaction.id, reaction.bounds
+print " " 
+
+# Generando resultados de la optimizacion del modelo
+prod_env = production_envelope(model, [sustrato1, sustrato2])
+
+#PREPARANDO LOS RESULTADOS_______________________________________________________________________________________________________
+X      = np.unique(-1*prod_env[sustrato1])     # Vector de variacion de EX_glc_D_e
+Y      = np.unique(-1*prod_env[sustrato2])         # Vector de variacion de EX_o2_e
+data_Z = prod_env["flux_maximum"]
+# Matriz bidimensional de datos de Flux maximum
+num_dat= len(X)                                 
+matriz = np.zeros((num_dat,num_dat))
+for i in range(num_dat):
+    fila_i = data_Z[num_dat*i:num_dat*(i+1)].values.tolist()
+    fila_i.reverse()
+    matriz[i,:] = fila_i
+#Limpiando y ordenando la matriz de Flux maximum
+matriz[np.isnan(matriz)] = 0.0
+flux = matriz.tolist()
+flux.reverse()
+Z = np.asarray(flux)
+
+#GENERANDO GRAFICO 3D____________________________________________________________________________________________________________
+fig  = plt.figure(figsize= (15,7.5))
+ax   = Axes3D(fig)
+X, Y = np.meshgrid(X, Y)
+surf = ax.plot_surface(X, Y, Z, rstride=1, cstride=1, linewidth=1., antialiased=True, cmap="copper")
+ax.view_init(elev=45, azim=245)
+
+#Escalando el eje Z (vertical) respecto a los ejes X e Y
+z_factor = 1.0
+escala   = np.diag([1./z_factor, 1./z_factor, 1., 1.])
+def short_proj():
+  return np.dot(Axes3D.get_proj(ax), escala)
+ax.get_proj = short_proj
+
+#Marcacion de los ejes
+Xmax = math.ceil(np.max(X))
+Ymax = math.ceil(np.max(Y))
+Zmax = np.max(Z)
+ax.set_xlim3d(0, Xmax)
+ax.set_ylim3d(0, Ymax)
+ax.set_xticks(np.arange(0.0, Xmax, step=0.1))
+ax.set_yticks(np.arange(0.0, Ymax, step=0.5))
+ax.set_zticks(np.arange(0.0, Zmax, step=0.01))
+
+# Formato adicional
+ax.text2D(0.38, 1.0, "BIOMASS PRODUCTION", transform=ax.transAxes, fontsize=15, fontweight='bold')
+ax.set_xlabel("Glucose [mmol/g/h]", fontsize=12, labelpad= 15)
+ax.set_ylabel("Ammonium [mmol/g/h]" , fontsize=12, labelpad= 15)
+ax.set_zlabel("Growth rate [1/h]" , fontsize=12, labelpad= 15)
+surf.set_edgecolor("maroon")
+
+plt.show()
+
+
+#CAMBIOS EN LA FUNCION OBJETIVO ACORDE A LOS DATOS EXPERIMENTALES______________________________________________________________ 
+exp = [-8.5, -0.53]  # Datos experimentales
+
+print '\033[1m' + "Cambio en la funcion objetivo al asignar valores experimentales",'\033[0m'
+value1= exp[0]
+model.reactions.get_by_id(sustrato1).upper_bound = value1*(1 + 0.1)
+model.reactions.get_by_id(sustrato1).lower_bound = value1*(1 - 0.1)
+
+value2= exp[1]
+model.reactions.get_by_id(sustrato2).upper_bound = value2*(1 + 0.1) 
+model.reactions.get_by_id(sustrato2).lower_bound = value2*(1 - 0.1)
+
+solution=model.optimize() #cambios en la funcion objetivo acorde a datos experimentales
+model.summary() 
+
+#Calculo de la norma euclidiana
+sim = [sustrato1, sustrato2]   # Datos simulados  
+print "=========================================================================================================================="
+norma_eucli(exp, sim)
