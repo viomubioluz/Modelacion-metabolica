@@ -1,0 +1,176 @@
+import cobra, os, cobra.test, re, math
+import numpy              as np
+import matplotlib.pyplot  as plt
+from scipy.integrate      import odeint
+from os.path              import join
+from matplotlib           import cm
+from mpl_toolkits.mplot3d import Axes3D
+from cobra.flux_analysis  import production_envelope
+
+sustrato1 = "EX_glc__D_e"
+sustrato2 = "EX_o2_e"
+
+model=cobra.io.read_sbml_model(join(".", "iMM904.xml"))
+
+solution = model.optimize()
+prod_env = production_envelope(model, [sustrato1, sustrato2])
+#model.summary()
+
+# Bloque Cinetico:
+def kineticBlock(Glu,Eth):
+    qGmax, K_Glu, K_Eth = 22.5, 0.88, 6.74
+    f_Eth, f_form = 10, 10
+    
+    q_Glu = qGmax*Glu/(K_Glu + Glu)/(1 + Eth/K_Eth)
+    q_O   = 1.
+    
+    LB_Eth  = q_Glu*f_Eth
+    LB_form = q_Glu*f_form 
+    
+    return [q_Glu, q_O, LB_Eth, LB_form]
+
+# Bloque Metabolico:
+def metabolicBlock (q_Glu, q_O,LB_Eth,LB_form):
+    model.reactions.get_by_id(sustrato1).lower_bound = -q_Glu
+    model.reactions.get_by_id(sustrato1).upper_bound = 0
+    model.reactions.get_by_id(sustrato2).lower_bound = -q_O  
+    model.reactions.get_by_id(sustrato2).upper_bound = 0
+    
+    model.reactions.get_by_id("EX_etoh_e").upper_bound = LB_Eth
+    model.reactions.get_by_id("EX_for_e").upper_bound  = LB_form  
+    
+    solution = model.optimize()
+    u = solution.objective_value
+    
+    q_Eth = model.reactions.get_by_id("EX_etoh_e").x
+    q_form = model.reactions.get_by_id("EX_for_e").x
+    
+    return [u, q_Eth, q_form]
+    
+# Bloque Dinamico:
+def f(y, t, params):
+    Glu_F =  200.
+    
+    V, VX, VGlu, VEth, Vform    = y
+    F, u, q_Glu, q_Eth, q_form  = params
+    MW_Glu, MW_Eth,MW_form      = [0.18, 0.046, 0.045]
+    
+    derivs= [F,                          # dV/dt
+            u*VX,                        # dVX/dt
+            F*Glu_F - q_Glu*MW_Glu*(VX), # dVGlu/dt
+            q_Eth*MW_Eth*(VX),           # dVEth/dt
+            q_form*MW_form*(VX)]         # dVform/dt
+    return derivs
+
+def dynamicBlock(y, params, ti, tf):
+    time = np.linspace(ti, tf, 100)
+    F, u, q_Glu, q_Eth,q_form = params
+    
+    soln = odeint(f, y, time, args=(params,))
+    V = soln[-1,0]
+    X, Glu, Eth, form = soln[-1,1:7]/V
+    return [V, X, Glu, Eth, form]    
+
+# Registrando resultados:
+u_path, V_path, X_path = [],[],[]
+Glu_path, Eth_path, form_path = [],[],[]
+q_Glu_path=[]
+
+def savePath(u, V, X, Glu, Eth, form, q_Glu):
+    global u_path, V_path, X_path
+    global Glu_path, Eth_path, form_path
+    global q_Glu_path
+    
+    u_path   += [u]
+    V_path   += [V]
+    X_path   += [X]
+    Glu_path += [Glu]
+    Eth_path += [Eth]
+
+    form_path  += [form]
+    q_Glu_path += [q_Glu]
+    
+# Condiciones iniciales
+F = 0.5
+Glu = 20.
+V, X = [0.5, 0.5]
+Eth, form = [0,0]
+
+# Ejecutando simulación:
+time = np.linspace(0, 50, 600)
+for i in range(len(time)):
+    # Bloque Cinetico: 
+    q_Glu, q_O, LB_Eth, LB_form = kineticBlock(Glu,Eth)
+    # Bloque Metabolico:
+    u, q_Eth,  q_form           = metabolicBlock(q_Glu, q_O, LB_Eth, LB_form)
+    # Bloque Dinamico:
+    if i==len(time)-1: continue
+    y = [V, X*V, Glu*V, Eth*V, form*V]
+    params = [F, u, q_Glu, q_Eth, q_form]
+    V, X, Glu, Eth,  form = dynamicBlock(y, params, time[i], time[i+1])
+    # Registro de resultados:
+    savePath(u, V, X, Glu, Eth, form, q_Glu)
+
+#GRAFICANDO SIMULACION DINAMICA___________________________________________________________________________________________
+plt.plot(time[1:600],Glu_path, 'k',linewidth=2, label='Glucose')
+plt.plot(time[1:600],X_path,   'r',linewidth=2, label='Biomass')
+plt.plot(time[1:600],Eth_path, 'b',linewidth=2, label='Ethanol')
+plt.plot(time[1:600],form_path,'m',linewidth=2, label='Formate')
+
+plt.title('DYNAMIC FLUX BALANCE ANALYSIS', fontweight='bold')
+plt.ylabel('Biomass, Substrate & Products [g/L]', fontsize=12)
+plt.xlabel('Time [h]', fontsize=12)
+plt.legend()
+plt.show()
+
+
+# CALCULANDO PLANOS DE FASE________________________________________________________________________________________________
+#Preparando resultados:
+X      = np.unique(-1*prod_env[sustrato1])
+Y      = np.unique(-1*prod_env[sustrato2])
+data_Z = prod_env["flux_maximum"]
+
+num_dat= len(X)                                 
+matriz = np.zeros((num_dat,num_dat))
+for i in range(num_dat):
+    fila_i = data_Z[num_dat*i:num_dat*(i+1)].values.tolist()
+    fila_i.reverse()
+    matriz[i,:] = fila_i
+
+matriz[np.isnan(matriz)] = 0.0
+flux = matriz.tolist()
+flux.reverse()
+Z = np.asarray(flux)
+
+#GENERANDO GRAFICO 3D  (PLANOS DE FASE)____________________________________________________________________________________________________________
+fig  = plt.figure(figsize= (14, 6.5))
+ax   = Axes3D(fig)
+X, Y = np.meshgrid(X, Y)
+surf = ax.plot_surface(X, Y, Z, rstride=1, cstride=1, linewidth=1., antialiased=True, cmap="binary")
+ax.view_init(elev=45, azim=245)
+
+#Escalando el eje Z (vertical) respecto a los ejes X e Y
+z_factor = 2.00
+escala   = np.diag([1./z_factor, 1./z_factor, 1., 1.])
+def short_proj():
+    return np.dot(Axes3D.get_proj(ax), escala)
+ax.get_proj = short_proj
+
+#Marcacion de los ejes
+Xmax = math.ceil(np.max(X))
+Ymax = math.ceil(np.max(Y))
+Zmax = np.max(Z)
+ax.set_xlim3d(0, Xmax)
+ax.set_ylim3d(0, Ymax)
+ax.set_xticks(np.arange(0.0, Xmax, step=1.00))
+ax.set_yticks(np.arange(0.0, Ymax, step=0.50))
+ax.set_zticks(np.arange(0.0, Zmax, step=0.05))
+
+# Formato adicional
+ax.text2D(0.35, 0.75, "BIOMASS PRODUCTION", transform=ax.transAxes, fontsize=15, fontweight='bold')
+ax.set_xlabel("Glucose [mmol/g/h]", fontsize=12, labelpad= 15)
+ax.set_ylabel("Oxygen [mmol/g/h]" , fontsize=12, labelpad= 15)
+ax.set_zlabel("Growth rate [1/h]" , fontsize=12, labelpad= 15)
+surf.set_edgecolor("gray")
+
+plt.show()
